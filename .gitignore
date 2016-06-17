@@ -1,4 +1,6 @@
 *.[oa]
 *~
+*swn
+*swo
 bin/
 logs/
