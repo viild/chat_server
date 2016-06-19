@@ -10,7 +10,7 @@
 #include <time.h>
 
 #include "ErrorCodes.h"
-/* -------END LIBRARY SECTION-sdfsdfsdf- */
+/* -------END LIBRARY SECTION--------------- */
 
 /* -------BEGIN DEFINITIONS SECTION---------- */
 
@@ -102,19 +102,19 @@ int main()
 	//Database mutex init
 	if(pthread_mutex_init(&db_mutex, 0) != 0)
 	{
-		perror("Database mutex error:init\n");
+		perror("Database mutex error:init");
 		exit(DB_INIT_ERR);
 	}
 	//Log mutex init
 	if(pthread_mutex_init(&log_mutex, 0) != 0)
 	{
-		perror("Log mutex error:init\n");
+		perror("Log mutex error:init");
 		exit(LOG_INIT_ERR);
 	}
 	//Create TCP scoket
 	if((TCPSocketFD = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 	{
-		perror("TCP Error:create\n");
+		perror("TCP Error:create");
 		close(TCPSocketFD);
 		exit(SOCK_CRT_ERR);
 	}
@@ -126,7 +126,7 @@ int main()
 	//Bind TCP socket
 	if(bind(TCPSocketFD, Sadr &TCPServer, sizeof(TCPServer)) == -1)
 	{
-		perror("TCP Error:bind\n");
+		perror("TCP Error:bind");
 		close(TCPSocketFD);
 		exit(SOCK_BIND_ERR);	
 	}
@@ -140,7 +140,7 @@ int main()
 	log = fopen(File_name, "wt"); //creating text file for write
 	if (!log) 
 	{
-		perror("Log file error:create\n");
+		perror("Log file error:create");
 		log = NULL;
 		fclose(log);
 		close(TCPSocketFD);
@@ -177,7 +177,6 @@ int main()
 			{
 				if(Users[i_idx].Socket != 0)
 				{
-					shutdown(Users[i_idx].Socket, SHUT_RDWR);
 					close(Users[i_idx].Socket);
 				}
 			}
@@ -188,9 +187,8 @@ int main()
 		{
 			for(i_idx = 0; i_idx < 10; i_idx++)
 			{
-				printf("\n%d\t%d\t%s", Users[i_idx].UID, Users[i_idx].Socket, Users[i_idx].nickname);
+				printf("%d\t%d\t%s\n", Users[i_idx].UID, Users[i_idx].Socket, Users[i_idx].nickname);
 			}
-			printf("\n");
 		}
 	}
 	//End
@@ -300,20 +298,17 @@ void *TCPcomm(void *arg)
 	memset(&UID, 0, sizeof(UID));
 	//Send to USER his UID
 	itoa(SockFD, UID, 10);
-	printf("UID %s\n", UID);
 	if(send(SockFD, UID, 10, 0) <= 0)
 	{
 		pthread_mutex_lock(&db_mutex);
 		Users[user_index].UID = 0;
-		Users[user_index].Socket = 0;
+		Users[user_index].Socket = -3;
 		memset(&Users[user_index].nickname, 0, sizeof(Users[user_index].nickname));
 		pthread_mutex_unlock(&db_mutex);
 		printf("Socket was closed\n");
 		close(SockFD);
 		return NULL;
 	}
-	
-
 	while(1)
 	{
 		memset(&message, 0, sizeof(message));
@@ -321,7 +316,12 @@ void *TCPcomm(void *arg)
 		{
 			break;
 		}
-		if(strlen(message) > 0)
+		printf("Recieved message is:%s\n", message);
+		if(strlen(message) <= 0)
+		{
+			break;
+		}
+		else
 		{
 			if(strcmp(message, "exit") == 0) break;
 	
@@ -360,12 +360,7 @@ void *TCPcomm(void *arg)
 			if(isExist == 1 && destination_id != 0) 
 			{
 				send_to_user(message, SockFD, destination_id);
-			}		
-		}
-		//if message read error
-		else
-		{
-			break;
+			}	
 		}
 	}
 
