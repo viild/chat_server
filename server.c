@@ -59,12 +59,21 @@ struct user Users[MAX_CLIENTS];
 
 
 
-/* ----------BEGIN FUNCTION HEADER--------------- */
+/* -----------------------------------------BEGIN FUNCTION HEADER----------------------------------------- */
+/*Function which convert integer to ASCII*/
 char * itoa(int number, char * destination, int base);
+/* Message handler. When message incoming server extracts destination user nickname and message */
 void parser(char (*message)[], int *UID_from,int *UID_to, char (*returned_message)[]);
+/* TCPThrd accepts incoming connections, TCPcomm processing such connections */
 void * TCPcomm(void * arg);
 void * TCPThrd(void * sock);
-/* ----------END FUNCTION HEADER----------------- */
+/* Send message to all users */
+int send_to_all(char message[]);
+/* Send message to particular user */
+int send_to_user(char message[], int source_fd, int destination_id);
+
+
+/* ------------------------------------------END FUNCTION HEADER------------------------------------------ */
 
 
 
@@ -253,14 +262,14 @@ void parser(char (*message)[], int *UID_from,int *UID_to, char (*returned_messag
 void *TCPcomm(void *arg)
 {
 	//variables
-	int ClientIdx = 0;
 	int i_idx = 0;
-	int SockFD;
-	int UID_to = 0;
-	int UID_from = 0;
-	int UID_to_idx = 0;
+	int SockFD; //FD of user socket
+	int source_id = 0; //ID of particular user
+	int destination_id = 0; //ID of some of destination user
+	int user_index = 0; //user index in database
+	int usr = 0; //temp variable
 	char message[MAX_LENGTH];
-	char name[20];
+	char name[11]; //user nickname
 	char UID[10];
 	char msg_for_send[256];
 	
@@ -269,34 +278,46 @@ void *TCPcomm(void *arg)
 
 	pthread_detach(pthread_self());
 
-	recv(SockFD, name, 20, 0); //Get Username
+	recv(SockFD, name, 11, 0); //Get Username
+	printf("Username: %s\n", name);
 
 	//Find first empty slot for user
 	pthread_mutex_lock(&db_mutex);
-		for(i_idx = 0; i_idx < MAX_CLIENTS; i_idx++)
+	for(i_idx = 0; i_idx < MAX_CLIENTS; i_idx++)
+	{
+		if(Users[i_idx].UID == 0)
 		{
-			if(Users[i_idx].UID == 0)
-			{
-				ClientIdx = i_idx;
-				break;	
-			}
+			Users[i_idx].UID = i_idx+1;
+			Users[i_idx].Socket = SockFD;
+			strcpy(Users[i_idx].nickname, name);
+			user_index = i_idx;
+			source_id = i_idx + 1;
+			break;	
 		}
-		Users[ClientIdx].UID = i_idx+1;
-		Users[ClientIdx].Socket = SockFD;
-		strcpy(Users[ClientIdx].nickname, name);
+	}
 	pthread_mutex_unlock(&db_mutex);
 	
-
+	memset(&UID, 0, sizeof(UID));
 	//Send to USER his UID
-	itoa(Users[ClientIdx].UID, UID, 10);
-	send(SockFD, UID, 10, 0);
+	itoa(SockFD, UID, 10);
+	printf("UID %s\n", UID);
+	if(send(SockFD, UID, 10, 0) <= 0)
+	{
+		pthread_mutex_lock(&db_mutex);
+		Users[user_index].UID = 0;
+		Users[user_index].Socket = 0;
+		memset(&Users[user_index].nickname, 0, sizeof(Users[user_index].nickname));
+		pthread_mutex_unlock(&db_mutex);
+		printf("Socket was closed\n");
+		close(SockFD);
+		return NULL;
+	}
 	
 
 	while(1)
 	{
-		int recvln = 0;
 		memset(&message, 0, sizeof(message));
-		if(recvln = recv(SockFD, message, MAX_LENGTH, 0) == -1)
+		if(recv(SockFD, message, MAX_LENGTH, 0) == -1)
 		{
 			break;
 		}
@@ -304,35 +325,24 @@ void *TCPcomm(void *arg)
 		{
 			if(strcmp(message, "exit") == 0) break;
 	
-			parser(&message, &UID_from, &UID_to, &msg_for_send);
+			parser(&message, &usr, &destination_id, &msg_for_send);
 
 			pthread_mutex_lock(&db_mutex);
-			int ready1 = 0;
-			int ready2 = 0;
+			//build new message "Nickname[UID]:message"
 			memset(&message, 0, sizeof(message));
+			strcat(message, Users[user_index].nickname);
+			strcat(message, "[");
+			strcat(message, UID);
+			strcat(message, "]:");
+			strcat(message, msg_for_send);
+			strcat(message, "\n");
+			
+			int isExist = 0;
 			for(i_idx = 0; i_idx < MAX_CLIENTS; i_idx++)
 			{
-				//build new message "Nickname[UID]:message"
-				if(Users[i_idx].UID == UID_from)
-				{
-					itoa(Users[i_idx].UID, UID, 10);
-					strcat(message, Users[i_idx].nickname);
-					strcat(message, "[");
-					strcat(message, UID);
-					strcat(message, "]:");
-					strcat(message, msg_for_send);
-					strcat(message, "\n");
-					ready1 = 1;
-					if((ready1 * ready2) == 1) break;
-				}
-				//take index if message for single user
-				else if(UID_to != 0 && Users[i_idx].UID == UID_to)
-				{
-					UID_to_idx = i_idx;
-					ready2 = 1;
-					if((ready1 * ready2) == 1) break;
-				}
+				if(Users[i_idx].UID == destination_id) isExist = 1;
 			}
+
 			pthread_mutex_unlock(&db_mutex);
 
 			//log
@@ -341,39 +351,16 @@ void *TCPcomm(void *arg)
 			pthread_mutex_unlock(&log_mutex);
 
 			//resend
-			pthread_mutex_lock(&db_mutex);
 			//if message for server
-			if(UID_to == 0)
+			if(destination_id == 0)
 			{
-				for(i_idx = 0; i_idx < MAX_CLIENTS; i_idx++)
-				{
-					send(Users[i_idx].Socket, message, MAX_LENGTH, 0);
-					send(Users[i_idx].Socket, "publ", sizeof("publ"), 0);
-				}
+				send_to_all(message);
 			}
 			//if message for single user
-			else
+			if(isExist == 1 && destination_id != 0) 
 			{
-				//check for the existence of the user
-				int isExist = 0;
-				for(i_idx = 0; i_idx < MAX_CLIENTS; i_idx++)
-				{
-					if(Users[i_idx].UID == UID_to)
-					{
-						isExist = 1;
-						break;
-					}
-				}
-				//if isn't exist
-				if(isExist == 0)
-				{
-					send(Users[ClientIdx].Socket, "The UID isn't exist", MAX_LENGTH, 0);	
-					continue;
-				}
-				send(Users[UID_to_idx].Socket, message, MAX_LENGTH, 0);	
-				send(Users[UID_to_idx].Socket, "priv", sizeof("priv"), 0);
+				send_to_user(message, SockFD, destination_id);
 			}		
-			pthread_mutex_unlock(&db_mutex);
 		}
 		//if message read error
 		else
@@ -383,9 +370,9 @@ void *TCPcomm(void *arg)
 	}
 
 	pthread_mutex_lock(&db_mutex);
-		Users[ClientIdx].UID = 0;
-		Users[ClientIdx].Socket = 0;
-		memset(&Users[ClientIdx].nickname, 0, sizeof(Users[ClientIdx].nickname));
+		Users[user_index].UID = 0;
+		Users[user_index].Socket = 0;
+		memset(&Users[user_index].nickname, 0, sizeof(Users[user_index].nickname));
 	pthread_mutex_unlock(&db_mutex);
 
 	close(SockFD);
@@ -417,3 +404,46 @@ void *TCPThrd(void *sock)
 	}
 	return NULL;
 }
+
+int send_to_all(char message[])
+{
+pthread_mutex_lock(&db_mutex);
+	int i_idx = 0;
+	for(i_idx = 0; i_idx < MAX_CLIENTS; i_idx++)
+	{
+		if(Users[i_idx].Socket != 0)
+		{
+			send(Users[i_idx].Socket, message, MAX_LENGTH, 0);
+			send(Users[i_idx].Socket, "publ", sizeof("publ"), 0);
+		}
+	}
+pthread_mutex_unlock(&db_mutex);
+}
+
+int send_to_user(char message[], int source_fd, int destination_id)
+{
+int i_idx = 0;
+int destination_fd = 0;
+pthread_mutex_lock(&db_mutex);
+	//check existence of the user
+	int isExist = 0;
+	for(i_idx = 0; i_idx < MAX_CLIENTS; i_idx++)
+	{
+		if(Users[i_idx].UID == destination_id)
+		{
+			isExist = 1;
+			destination_fd = Users[i_idx].UID;
+			break;
+		}
+	}
+	//if user isn't exist
+	if(isExist == 0)
+	{
+		send(source_fd, "This user is not exitst", sizeof("This user is not exist"), 0);	
+		return USR_EXIST_ERR;
+	}
+	send(destination_fd, message, MAX_LENGTH, 0);	
+	send(destination_fd, "priv", sizeof("priv"), 0);
+pthread_mutex_unlock(&db_mutex);
+}
+

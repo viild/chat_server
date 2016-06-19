@@ -4,3 +4,5 @@
 #define SOCK_BIND_ERR 18
 #define LOGF_CRT_ERR 19
 #define SOCK_LST_ERR 20
+#define USR_EXIST_ERR 21
+
